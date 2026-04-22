@@ -30,7 +30,6 @@
     position: relative;
   }
 
-  /* Подсветка-блюр за холстом — берёт текущий цвет как свечение */
   .glow {
     position: fixed;
     top: 50%; left: 50%;
@@ -45,7 +44,6 @@
     transition: background 0.4s ease;
   }
 
-  /* Шорткаты слева сверху — в стиле старого редактора */
   #shortcuts-info {
     position: fixed;
     top: 14px; left: 14px;
@@ -63,11 +61,14 @@
     color: #6a6a6a;
     letter-spacing: 0.05em;
   }
-  #shortcuts-info ul {
-    list-style: none; padding: 0; margin: 0;
-  }
+  #shortcuts-info ul { list-style: none; padding: 0; margin: 0; }
   #shortcuts-info li { margin-bottom: 3px; }
   #shortcuts-info strong { color: #8a8a8a; font-weight: 700; }
+
+  /* На мобильных прячем шорткаты — там нет клавиатуры */
+  @media (max-width: 768px), (pointer: coarse) {
+    #shortcuts-info { display: none; }
+  }
 
   .coords {
     position: fixed; top: 14px; right: 14px;
@@ -125,18 +126,19 @@
     cursor: crosshair;
     background: #000;
   }
-  .overlay {
-    position: absolute; inset: 0;
-    pointer-events: none;
-  }
+  .overlay { position: absolute; inset: 0; pointer-events: none; }
   #handCursor { width: 100%; height: 100%; }
 
+  /* Палитры-наборы (только для camera) */
   .palettes {
     display: flex; gap: clamp(8px, 1.5vw, 14px);
     justify-content: center;
     flex-wrap: wrap;
     max-width: 100%;
+    min-height: 28px;
+    transition: opacity 0.2s;
   }
+  .palettes.dimmed { opacity: 0.25; pointer-events: none; }
   .palette {
     width: clamp(22px, 5vw, 28px);
     height: clamp(22px, 5vw, 28px);
@@ -172,6 +174,27 @@
   .toolbar .tool.active { text-decoration: underline; text-underline-offset: 4px; }
   .toolbar .tool.cam-live { color: var(--accent); }
   .toolbar .tool.hand-live { color: var(--accent2); }
+  .toolbar .tool.eraser-on { text-decoration: underline; text-underline-offset: 4px; }
+
+  /* Текущий цвет — квадратик для нативного color picker */
+  .current-color {
+    width: clamp(36px, 8vw, 58px);
+    height: clamp(20px, 4vw, 24px);
+    background: #fff;
+    display: inline-block;
+    border: 1px solid rgba(255,255,255,0.25);
+    cursor: pointer;
+    vertical-align: middle;
+    transition: opacity 0.15s;
+  }
+  .current-color:hover { opacity: 0.85; }
+  .current-color.hidden { display: none; }
+
+  input[type=color] {
+    opacity: 0; position: absolute;
+    pointer-events: none;
+    width: 0; height: 0;
+  }
 
   .countdown {
     position: absolute; inset: 0;
@@ -206,6 +229,7 @@
 <div id="shortcuts-info">
   <h3>Shortcuts</h3>
   <ul>
+    <li><strong>b:</strong> Toggle brush/eraser</li>
     <li><strong>m:</strong> Change mirror mode</li>
     <li><strong>c:</strong> Toggle camera</li>
     <li><strong>h:</strong> Toggle hand drawing</li>
@@ -214,6 +238,7 @@
     <li><strong>ctrl + Z:</strong> Undo</li>
     <li><strong>ctrl + S:</strong> Save as PNG</li>
     <li><strong>ctrl + J:</strong> Save as JSON</li>
+    <li><strong>i:</strong> Open Color Picker</li>
     <li><strong>[ ]:</strong> Canvas size</li>
   </ul>
 </div>
@@ -235,19 +260,24 @@
 
 <div class="toolbar">
   <span class="tool active" id="toolBrush">brush</span>
+  <span class="tool" id="toolEraser">eraser</span>
+  <span class="current-color" id="currentColor"></span>
+
   <span class="tool" id="toolCamera">camera</span>
-  <span class="tool" id="toolHand">hand</span>
   <span class="tool hidden" id="toolSnap">snap</span>
   <span class="tool hidden" id="toolResume">resume</span>
+
+  <span class="tool" id="toolHand">hand</span>
+
   <span class="tool" id="toolPng">png</span>
   <span class="tool" id="toolJson">json</span>
   <span class="tool" id="toolSvg">svg</span>
 </div>
 
+<input type="color" id="colorPicker" value="#e4a8ff">
 <video id="video" autoplay playsinline muted style="display:none;"></video>
 
 <script type="module">
-// MediaPipe Hands — грузится только при активации hand-режима
 let HandLandmarker, FilesetResolver;
 
 const PALETTES = [
@@ -263,20 +293,21 @@ const PALETTES = [
 const SIZES = [32, 48, 64, 80, 96, 112, 128];
 const COUNTDOWN_SECONDS = 3;
 
-// mode: 'brush' | 'camera' | 'hand' — три взаимоисключающих режима ввода
-// cameraState: 'live' | 'frozen' — подсостояние для 'camera' режима
+// mode: 'brush' | 'camera' | 'hand' — три режима ввода.
+// brush и hand рисуют кистью, различаются способом управления (мышь vs рука).
+// camera — автоматически заполняет холст из видеопотока.
 const state = {
   gridSize: 64,
   sizeIdx: 2,
   canvasPixels: 640,
   mirror: 0,
   mirrorNames: ['Normal', 'Vertical Mirror', 'Horizontal Mirror', 'Radial Mirror'],
-  color: '#e4a8ff',
-  palette: 0,
-  colorIdx: 4,
+  color: '#e4a8ff',       // используется в brush и hand
+  palette: 0,             // используется в camera
   grid: null,
   history: [],
   mode: 'brush',
+  eraser: false,          // ластик активен в brush/hand режимах
   cameraState: 'live',
   cameraStream: null,
   videoEl: document.getElementById('video'),
@@ -344,13 +375,15 @@ function render() {
   }
 }
 
+// Красим/стираем в зависимости от режима ластика
 function paintCell(x, y) {
   const n = state.gridSize;
   if (x < 0 || y < 0 || x >= n || y >= n) return;
+  const val = state.eraser ? null : state.color;
   const cells = mirroredCells(x, y);
   for (const [cx, cy] of cells) {
     if (cx >= 0 && cy >= 0 && cx < n && cy < n) {
-      state.grid[cy][cx] = state.color;
+      state.grid[cy][cx] = val;
     }
   }
 }
@@ -372,7 +405,6 @@ function mouseToGrid(e) {
   return [x, y];
 }
 
-// Рисовать мышкой можно только в brush-режиме
 mainCanvas.addEventListener('pointerdown', (e) => {
   if (state.mode !== 'brush') return;
   pushHistory();
@@ -412,15 +444,18 @@ function drawLine(x0, y0, x1, y1) {
   }
 }
 
-// Хоткеи
 window.addEventListener('keydown', (e) => {
   const ae = document.activeElement;
   if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA')) return;
 
   if (e.key === 'Shift') state.shiftPressed = true;
+  if (e.key === 'b' || e.key === 'B') toggleEraser();
   if (e.key === 'm' || e.key === 'M') cycleMirror();
   if (e.key === 'c' || e.key === 'C') setMode(state.mode === 'camera' ? 'brush' : 'camera');
   if (e.key === 'h' || e.key === 'H') setMode(state.mode === 'hand'   ? 'brush' : 'hand');
+  if (e.key === 'i' || e.key === 'I') {
+    if (state.mode !== 'camera') document.getElementById('colorPicker').click();
+  }
   if (e.key === ' ') {
     e.preventDefault();
     if (state.mode === 'camera' && state.cameraState === 'live') startSnapCountdown();
@@ -454,7 +489,7 @@ function cycleSize(dir = 1) {
 }
 document.getElementById('sizeLabel').addEventListener('click', () => cycleSize(1));
 
-// Палитры
+// Палитры-наборы
 function paletteGradientCss(colors) {
   const n = colors.length;
   const stops = [];
@@ -471,9 +506,8 @@ PALETTES.forEach((pal, i) => {
   el.title = pal.name;
   el.style.background = paletteGradientCss(pal.colors);
   el.addEventListener('click', () => {
+    if (state.mode !== 'camera') return; // наборы только в camera-режиме
     state.palette = i;
-    const idx = Math.min(state.colorIdx, pal.colors.length - 1);
-    state.color = pal.colors[idx];
     updatePaletteUI();
     updateGlow();
   });
@@ -484,16 +518,27 @@ function updatePaletteUI() {
     el.classList.toggle('active', idx === state.palette);
   });
 }
-state.color = PALETTES[0].colors[state.colorIdx];
 
-// Подсветка-блюр за холстом — берёт среднюю "сочную" часть палитры
 function updateGlow() {
-  const pal = PALETTES[state.palette].colors;
-  // Берём предпоследний цвет — обычно он самый яркий/насыщенный
-  const glowColor = pal[pal.length - 2] || pal[Math.floor(pal.length / 2)];
-  glowEl.style.background = glowColor;
+  // Glow: в camera — от активного набора, в brush/hand — от текущего цвета
+  if (state.mode === 'camera') {
+    const pal = PALETTES[state.palette].colors;
+    glowEl.style.background = pal[pal.length - 2] || pal[Math.floor(pal.length / 2)];
+  } else {
+    glowEl.style.background = state.color;
+  }
 }
-updateGlow();
+
+// Color picker (brush/hand)
+const colorPicker = document.getElementById('colorPicker');
+const currentColorEl = document.getElementById('currentColor');
+currentColorEl.style.background = state.color;
+currentColorEl.addEventListener('click', () => colorPicker.click());
+colorPicker.addEventListener('input', (e) => {
+  state.color = e.target.value;
+  currentColorEl.style.background = state.color;
+  if (state.mode !== 'camera') updateGlow();
+});
 
 // Экспорт
 document.getElementById('toolPng').addEventListener('click', exportPNG);
@@ -545,12 +590,13 @@ function exportSVG() {
   link.click();
 }
 
-// ==================== РЕЖИМЫ ВВОДА ====================
-const toolBrush  = document.getElementById('toolBrush');
-const toolCamera = document.getElementById('toolCamera');
-const toolHand   = document.getElementById('toolHand');
-const toolSnap   = document.getElementById('toolSnap');
-const toolResume = document.getElementById('toolResume');
+// Режимы
+const toolBrush   = document.getElementById('toolBrush');
+const toolEraser  = document.getElementById('toolEraser');
+const toolCamera  = document.getElementById('toolCamera');
+const toolHand    = document.getElementById('toolHand');
+const toolSnap    = document.getElementById('toolSnap');
+const toolResume  = document.getElementById('toolResume');
 const countdownEl = document.getElementById('countdown');
 const flashEl     = document.getElementById('flash');
 const statusEl    = document.getElementById('status');
@@ -558,26 +604,46 @@ const statusEl    = document.getElementById('status');
 toolBrush.addEventListener('click',  () => setMode('brush'));
 toolCamera.addEventListener('click', () => setMode(state.mode === 'camera' ? 'brush' : 'camera'));
 toolHand.addEventListener('click',   () => setMode(state.mode === 'hand'   ? 'brush' : 'hand'));
+toolEraser.addEventListener('click', toggleEraser);
 toolSnap.addEventListener('click',   startSnapCountdown);
 toolResume.addEventListener('click', resumeCamera);
+
+function toggleEraser() {
+  if (state.mode === 'camera') return; // в camera ластик не нужен
+  state.eraser = !state.eraser;
+  updateToolbar();
+}
 
 function setStatus(msg) { statusEl.textContent = msg || ''; }
 
 function updateToolbar() {
-  toolBrush.classList.toggle('active',  state.mode === 'brush');
-  toolCamera.classList.toggle('active', state.mode === 'camera');
-  toolCamera.classList.toggle('cam-live', state.mode === 'camera');
-  toolHand.classList.toggle('active',   state.mode === 'hand');
-  toolHand.classList.toggle('hand-live', state.mode === 'hand');
+  const m = state.mode;
 
-  toolSnap.classList.toggle('hidden',   !(state.mode === 'camera' && state.cameraState === 'live'));
-  toolResume.classList.toggle('hidden', !(state.mode === 'camera' && state.cameraState === 'frozen'));
+  // Подсветка активного режима
+  toolBrush.classList.toggle('active', m === 'brush');
+  toolCamera.classList.toggle('active', m === 'camera');
+  toolCamera.classList.toggle('cam-live', m === 'camera');
+  toolHand.classList.toggle('active', m === 'hand');
+  toolHand.classList.toggle('hand-live', m === 'hand');
+
+  // Ластик и color picker: показываются в brush и hand, скрыты в camera
+  const isDrawMode = (m === 'brush' || m === 'hand');
+  toolEraser.classList.toggle('hidden', !isDrawMode);
+  currentColorEl.classList.toggle('hidden', !isDrawMode);
+  toolEraser.classList.toggle('eraser-on', state.eraser && isDrawMode);
+
+  // Snap/resume появляются рядом с camera только в camera-режиме
+  toolSnap.classList.toggle('hidden',   !(m === 'camera' && state.cameraState === 'live'));
+  toolResume.classList.toggle('hidden', !(m === 'camera' && state.cameraState === 'frozen'));
+
+  // Палитры-наборы активны только в camera, в остальных режимах приглушены
+  palettesEl.classList.toggle('dimmed', m !== 'camera');
 }
 
 async function setMode(next) {
   if (next === state.mode) return;
 
-  // Выход из текущего режима
+  // Выход из текущего
   if (state.mode === 'camera') {
     state.cameraState = 'live';
     state.countdownActive = false;
@@ -591,29 +657,30 @@ async function setMode(next) {
 
   state.mode = next;
 
-  // Вход в новый режим
   if (next === 'brush') {
-    // Можно отключить камеру, если никто больше её не использует
     if (state.cameraStream) {
       state.cameraStream.getTracks().forEach(t => t.stop());
       state.cameraStream = null;
     }
-    initGrid(state.gridSize);
-    render();
+    // Не очищаем холст — пусть то что нарисовано (или снято) остаётся как база для рисования
     setStatus('');
+    updateGlow();
   } else if (next === 'camera') {
+    state.eraser = false; // ластик в camera не используется
     const ok = await ensureCameraStream();
-    if (!ok) { state.mode = 'brush'; updateToolbar(); return; }
+    if (!ok) { state.mode = 'brush'; updateToolbar(); updateGlow(); return; }
     state.cameraState = 'live';
     setStatus('press space to snap');
+    updateGlow();
     cameraLoop();
   } else if (next === 'hand') {
     const ok = await ensureCameraStream();
-    if (!ok) { state.mode = 'brush'; updateToolbar(); return; }
+    if (!ok) { state.mode = 'brush'; updateToolbar(); updateGlow(); return; }
     try { await loadHandLandmarker(); }
-    catch { state.mode = 'brush'; updateToolbar(); return; }
+    catch { state.mode = 'brush'; updateToolbar(); updateGlow(); return; }
     state.lastDrawCell = null;
     setStatus('pinch index + thumb to draw');
+    updateGlow();
     handLoop();
   }
 
@@ -622,15 +689,6 @@ async function setMode(next) {
 
 async function ensureCameraStream() {
   if (state.cameraStream) return true;
-  if (location.protocol === 'file:') {
-    alert(
-      'Камера требует HTTP(S). Запусти локальный сервер:\n\n' +
-      '1) В терминале перейди в папку с файлом\n' +
-      '2) Выполни:  python3 -m http.server 8000\n' +
-      '3) Открой:   http://localhost:8000/'
-    );
-    return false;
-  }
   try {
     const stream = await navigator.mediaDevices.getUserMedia({
       video: { width: 640, height: 640, facingMode: 'user' },
@@ -641,12 +699,12 @@ async function ensureCameraStream() {
     await state.videoEl.play();
     return true;
   } catch (err) {
-    alert('Camera access denied or unavailable: ' + err.message);
+    alert("📷 Please allow camera access to use this mode.");
     return false;
   }
 }
 
-// --- Camera mode ---
+// Camera: snap + resume
 function startSnapCountdown() {
   if (state.mode !== 'camera' || state.cameraState !== 'live' || state.countdownActive) return;
   state.countdownActive = true;
@@ -730,7 +788,7 @@ function cameraLoop() {
   requestAnimationFrame(cameraLoop);
 }
 
-// --- Hand mode ---
+// Hand mode
 async function loadHandLandmarker() {
   if (state.handLoaded || state.handLoading) return;
   state.handLoading = true;
@@ -826,12 +884,16 @@ function drawHandCursor() {
   const cx = state.handSmoothX * w;
   const cy = state.handSmoothY * h;
   const r = state.handPinching ? 14 : 20;
-  ctx2.strokeStyle = state.handPinching ? '#ff4ad1' : '#7ed0ff';
+  // Цвет курсора — текущий цвет кисти (или розовый при активном щипке)
+  const col = state.handPinching
+    ? (state.eraser ? '#ffffff' : state.color)
+    : '#7ed0ff';
+  ctx2.strokeStyle = col;
   ctx2.lineWidth = 3;
   ctx2.beginPath();
   ctx2.arc(cx, cy, r, 0, Math.PI * 2);
   ctx2.stroke();
-  ctx2.fillStyle = state.handPinching ? '#ff4ad1' : '#7ed0ff';
+  ctx2.fillStyle = col;
   ctx2.beginPath();
   ctx2.arc(cx, cy, 3, 0, Math.PI * 2);
   ctx2.fill();
@@ -840,6 +902,7 @@ function drawHandCursor() {
 // Старт
 initGrid(state.gridSize);
 updateToolbar();
+updateGlow();
 render();
 </script>
 </body>
