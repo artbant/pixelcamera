@@ -1,16 +1,23 @@
 # Pixel Camera
 
-Minimalist pixel art editor with live camera input. Draw by hand or let your webcam paint itself pixel-by-pixel through the palette of your choice.
+Draw by hand, with your webcam, or with your actual hand in the air.
 
-## Features
+**[Live →](https://artbant.github.io/pixelcamera/)**
 
-- Canvas sizes from 32×32 to 128×128 (click size to cycle)
-- Four mirror modes: Normal, Vertical, Horizontal, Radial (click title to cycle)
-- 7 built-in palettes: neon, sunset, gameboy, c64, mono, vapor, earth
-- Live camera mode — real-time pixelation quantized to the active palette, with mirror modes applied
-- Export to PNG, JSON, SVG
-- Single HTML file, no dependencies, no build step
+## What it does
 
-## Stack
+- **Draw** — click and drag, pixel by pixel
+- **Camera** — your webcam paints itself through the active palette
+- **Hand** — pinch your fingers in the air to draw, no mouse needed
+- **Snap** — 3-second countdown, freeze the frame, export it
 
-Vanilla HTML + JS + Canvas 2D. No frameworks.
+## Modes & controls
+
+- Click the title — cycle mirror mode (Normal, Vertical, Horizontal, Radial)
+- Click the size — cycle canvas (32 → 128)
+- Click a palette — switch the color set
+- Export as PNG, JSON, or SVG
+
+## Under the hood
+
+Vanilla HTML + JS + Canvas 2D. MediaPipe Hands for gesture tracking. Single file, no build, no dependencies.
