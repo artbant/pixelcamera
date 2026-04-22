@@ -189,10 +189,16 @@
   .current-color:hover { opacity: 0.85; }
   .current-color.hidden { display: none; }
 
+  /* Нативный color picker: должен быть в DOM с реальным размером,
+     иначе браузер блокирует открытие диалога. Делаем его 1x1 и прозрачным,
+     но кликабельным программно. */
   input[type=color] {
-    opacity: 0; position: absolute;
+    position: absolute;
+    left: -9999px;
+    top: -9999px;
+    width: 1px; height: 1px;
+    opacity: 0;
     pointer-events: none;
-    width: 0; height: 0;
   }
 
   .countdown {
@@ -453,7 +459,7 @@ window.addEventListener('keydown', (e) => {
   if (e.key === 'c' || e.key === 'C') setMode(state.mode === 'camera' ? 'brush' : 'camera');
   if (e.key === 'h' || e.key === 'H') setMode(state.mode === 'hand'   ? 'brush' : 'hand');
   if (e.key === 'i' || e.key === 'I') {
-    if (state.mode !== 'camera') document.getElementById('colorPicker').click();
+    if (state.mode !== 'camera') openColorPicker();
   }
   if (e.key === ' ') {
     e.preventDefault();
@@ -532,8 +538,21 @@ function updateGlow() {
 const colorPicker = document.getElementById('colorPicker');
 const currentColorEl = document.getElementById('currentColor');
 currentColorEl.style.background = state.color;
-currentColorEl.addEventListener('click', () => colorPicker.click());
+
+function openColorPicker() {
+  // Синхронизируем значение picker'а с текущим цветом перед открытием,
+  // чтобы диалог открывался на правильном цвете.
+  colorPicker.value = state.color;
+  colorPicker.click();
+}
+currentColorEl.addEventListener('click', openColorPicker);
+
 colorPicker.addEventListener('input', (e) => {
+  state.color = e.target.value;
+  currentColorEl.style.background = state.color;
+  if (state.mode !== 'camera') updateGlow();
+});
+colorPicker.addEventListener('change', (e) => {
   state.color = e.target.value;
   currentColorEl.style.background = state.color;
   if (state.mode !== 'camera') updateGlow();
