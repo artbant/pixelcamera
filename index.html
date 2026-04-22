@@ -185,20 +185,21 @@
     cursor: pointer;
     vertical-align: middle;
     transition: opacity 0.15s;
+    position: relative;
   }
   .current-color:hover { opacity: 0.85; }
   .current-color.hidden { display: none; }
 
-  /* Нативный color picker: должен быть в DOM с реальным размером,
-     иначе браузер блокирует открытие диалога. Делаем его 1x1 и прозрачным,
-     но кликабельным программно. */
+  /* Нативный color picker должен быть в viewport (современные браузеры
+     блокируют picker у элементов за экраном). Делаем 1x1 поверх quadратика
+     текущего цвета и клипаем так, чтобы не мешал визуально. */
   input[type=color] {
     position: absolute;
-    left: -9999px;
-    top: -9999px;
     width: 1px; height: 1px;
     opacity: 0;
     pointer-events: none;
+    clip: rect(0 0 0 0);
+    overflow: hidden;
   }
 
   .countdown {
@@ -266,7 +267,9 @@
 <div class="toolbar">
   <span class="tool active" id="toolBrush">brush</span>
   <span class="tool" id="toolEraser">eraser</span>
-  <span class="current-color" id="currentColor"></span>
+  <span class="current-color" id="currentColor">
+    <input type="color" id="colorPicker" value="#e4a8ff">
+  </span>
 
   <span class="tool" id="toolHand">hand</span>
 
@@ -279,7 +282,6 @@
   <span class="tool" id="toolSvg">svg</span>
 </div>
 
-<input type="color" id="colorPicker" value="#e4a8ff">
 <video id="video" autoplay playsinline muted style="display:none;"></video>
 
 <script type="module">
