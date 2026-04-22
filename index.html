@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 <title>Pixel Camera</title>
 <style>
   :root {
@@ -14,33 +15,38 @@
     margin: 0; padding: 0;
     background: var(--bg); color: var(--fg);
     font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
-    min-height: 100vh; overflow-x: hidden;
+    min-height: 100vh; min-height: 100dvh;
+    overflow-x: hidden;
   }
   body {
     display: flex; flex-direction: column; align-items: center;
-    padding: 24px 24px 80px;
+    padding: clamp(12px, 3vw, 24px);
+    gap: clamp(14px, 2.5vh, 24px);
   }
 
   .coords {
-    position: fixed; top: 24px; right: 24px;
-    font-size: 12px; color: var(--dim2);
+    position: fixed; top: 12px; right: 14px;
+    font-size: 11px; color: var(--dim2);
     letter-spacing: 0.05em;
+    pointer-events: none;
   }
 
   .title {
-    margin-top: 40px;
-    font-size: 28px; font-weight: 700;
+    font-size: clamp(20px, 4.5vw, 28px);
+    font-weight: 700;
     letter-spacing: 0.01em;
     user-select: none;
     cursor: pointer;
     text-align: center;
     transition: color 0.15s;
+    margin: 0; padding: 0;
   }
   .title:hover { color: var(--dim2); }
 
   .size {
-    margin-top: 8px; margin-bottom: 28px;
-    font-size: 14px; color: var(--dim2);
+    margin-top: -8px;
+    font-size: clamp(11px, 2vw, 14px);
+    color: var(--dim2);
     letter-spacing: 0.08em;
     cursor: pointer;
     user-select: none;
@@ -48,31 +54,38 @@
   }
   .size:hover { color: var(--fg); }
 
+  /* Холст подстраивается под доступное пространство */
   .canvas-wrap {
     position: relative;
     border: 1px solid rgba(255,255,255,0.25);
+    /* Квадратный, ограничен и по ширине, и по высоте экрана */
+    width: min(90vw, 70vh, 640px);
+    aspect-ratio: 1 / 1;
+    flex-shrink: 0;
   }
   canvas#main {
     display: block;
+    width: 100%; height: 100%;
     image-rendering: pixelated;
     image-rendering: crisp-edges;
     cursor: crosshair;
     background: #000;
   }
 
-  /* Палитры: один квадрат на палитру, все в один ряд */
+  /* Палитры — адаптивный wrap */
   .palettes {
-    margin-top: 32px;
-    display: flex; gap: 14px;
+    display: flex; gap: clamp(8px, 1.5vw, 14px);
     justify-content: center;
     flex-wrap: wrap;
+    max-width: 100%;
   }
   .palette {
-    width: 28px; height: 28px;
+    width: clamp(22px, 5vw, 28px);
+    height: clamp(22px, 5vw, 28px);
     border: 1px solid rgba(255,255,255,0.2);
     cursor: pointer;
     transition: border-color 0.15s, transform 0.1s;
-    position: relative;
+    flex-shrink: 0;
   }
   .palette:hover { border-color: rgba(255,255,255,0.6); }
   .palette.active {
@@ -81,17 +94,53 @@
   }
 
   .toolbar {
-    margin-top: 28px;
-    display: flex; gap: 22px; align-items: center;
-    font-size: 22px; font-weight: 700;
+    display: flex; gap: clamp(12px, 3vw, 22px);
+    align-items: center;
+    font-size: clamp(16px, 3.2vw, 22px);
+    font-weight: 700;
     letter-spacing: 0.02em;
+    flex-wrap: wrap;
+    justify-content: center;
+    max-width: 100%;
   }
   .toolbar .tool {
     cursor: pointer; color: var(--fg);
     padding: 2px 4px;
     transition: opacity 0.15s;
+    user-select: none;
   }
   .toolbar .tool:hover { opacity: 0.6; }
+  .toolbar .tool.hidden { display: none; }
+  .toolbar .tool.live { color: #ff4ad1; }
+
+  /* Большая цифра обратного отсчёта поверх холста */
+  .countdown {
+    position: absolute;
+    inset: 0;
+    display: none;
+    align-items: center; justify-content: center;
+    font-size: clamp(80px, 20vw, 180px);
+    font-weight: 700;
+    color: #fff;
+    text-shadow: 0 0 24px rgba(0,0,0,0.8);
+    pointer-events: none;
+    user-select: none;
+  }
+  .countdown.active { display: flex; }
+
+  /* Короткая вспышка в момент снимка */
+  .flash {
+    position: absolute;
+    inset: 0;
+    background: #fff;
+    opacity: 0;
+    pointer-events: none;
+  }
+  .flash.fire { animation: flash 0.35s ease-out; }
+  @keyframes flash {
+    0% { opacity: 0.9; }
+    100% { opacity: 0; }
+  }
 </style>
 </head>
 <body>
@@ -103,13 +152,16 @@
 
 <div class="canvas-wrap">
   <canvas id="main" width="640" height="640"></canvas>
+  <div class="countdown" id="countdown"></div>
+  <div class="flash" id="flash"></div>
 </div>
 
 <div class="palettes" id="palettes"></div>
 
 <div class="toolbar">
-  <span class="tool" id="toolBrush">brush</span>
   <span class="tool" id="toolCamera">camera</span>
+  <span class="tool hidden" id="toolSnap">snap</span>
+  <span class="tool hidden" id="toolResume">resume</span>
   <span class="tool" id="toolPng">png</span>
   <span class="tool" id="toolJson">json</span>
   <span class="tool" id="toolSvg">svg</span>
@@ -129,7 +181,12 @@ const PALETTES = [
 ];
 
 const SIZES = [32, 48, 64, 80, 96, 112, 128];
+const COUNTDOWN_SECONDS = 3;
 
+// ---------- Состояние ----------
+// cameraMode: 'off' — камера выключена (режим рисования)
+//             'live' — идёт живой поток с камеры
+//             'frozen' — показан стоп-кадр, камера ещё активна под капотом
 const state = {
   gridSize: 64,
   sizeIdx: 2,
@@ -138,18 +195,17 @@ const state = {
   mirrorNames: ['Normal', 'Vertical Mirror', 'Horizontal Mirror', 'Radial Mirror'],
   color: '#e4a8ff',
   palette: 0,
+  colorIdx: 4,
   grid: null,
   history: [],
-  cameraOn: false,
+  cameraMode: 'off',
   cameraStream: null,
   videoEl: document.getElementById('video'),
   hiddenCanvas: document.createElement('canvas'),
   drawing: false,
   shiftPressed: false,
   lineStart: null,
-  // Индекс цвета в текущей палитре — используется при смене палитры,
-  // чтобы кисть автоматически брала "тот же по смыслу" оттенок.
-  colorIdx: 4,
+  countdownActive: false,
 };
 
 function initGrid(size) {
@@ -226,8 +282,11 @@ function mouseToGrid(e) {
   return [x, y];
 }
 
+// Рисование доступно, только когда камера выключена
+function canDraw() { return state.cameraMode === 'off'; }
+
 mainCanvas.addEventListener('pointerdown', (e) => {
-  if (state.cameraOn) return;
+  if (!canDraw()) return;
   pushHistory();
   state.drawing = true;
   const [x, y] = mouseToGrid(e);
@@ -238,12 +297,12 @@ mainCanvas.addEventListener('pointermove', (e) => {
   const [x, y] = mouseToGrid(e);
   document.getElementById('coords').textContent =
     `x: ${Math.max(0, Math.min(state.gridSize-1, x))}, y: ${Math.max(0, Math.min(state.gridSize-1, y))}`;
-  if (state.drawing && !state.shiftPressed && !state.cameraOn) {
+  if (state.drawing && !state.shiftPressed && canDraw()) {
     paintCell(x, y); render();
   }
 });
 window.addEventListener('pointerup', (e) => {
-  if (state.drawing && state.shiftPressed && state.lineStart) {
+  if (state.drawing && state.shiftPressed && state.lineStart && canDraw()) {
     const [x, y] = mouseToGrid(e);
     drawLine(state.lineStart[0], state.lineStart[1], x, y);
     render();
@@ -269,6 +328,11 @@ window.addEventListener('keydown', (e) => {
   if (e.key === 'Shift') state.shiftPressed = true;
   if (e.key === 'm' || e.key === 'M') cycleMirror();
   if (e.key === 'c' || e.key === 'C') toggleCamera();
+  if (e.key === ' ') { // пробел = snap / resume
+    e.preventDefault();
+    if (state.cameraMode === 'live') startSnapCountdown();
+    else if (state.cameraMode === 'frozen') resumeCamera();
+  }
   if ((e.ctrlKey || e.metaKey) && e.key === 'z') { e.preventDefault(); undo(); }
   if ((e.ctrlKey || e.metaKey) && e.key === 's') { e.preventDefault(); exportPNG(); }
   if ((e.ctrlKey || e.metaKey) && e.key === 'j') { e.preventDefault(); exportJSON(); }
@@ -296,11 +360,8 @@ function cycleSize(dir = 1) {
 }
 document.getElementById('sizeLabel').addEventListener('click', () => cycleSize(1));
 
-// ---------- Палитры: один квадрат на палитру ----------
-// Рисуем каждую палитру как маленький "слоёный" квадрат с градиентом
-// из 8 цветов, чтобы визуально считывалась её тема.
+// ---------- Палитры ----------
 function paletteGradientCss(colors) {
-  // Делим квадрат на вертикальные полоски по числу цветов
   const n = colors.length;
   const stops = [];
   colors.forEach((c, i) => {
@@ -309,7 +370,6 @@ function paletteGradientCss(colors) {
   });
   return `linear-gradient(to bottom, ${stops.join(', ')})`;
 }
-
 const palettesEl = document.getElementById('palettes');
 PALETTES.forEach((pal, i) => {
   const el = document.createElement('div');
@@ -318,7 +378,6 @@ PALETTES.forEach((pal, i) => {
   el.style.background = paletteGradientCss(pal.colors);
   el.addEventListener('click', () => {
     state.palette = i;
-    // Берём цвет по тому же индексу, что был, или ближайший валидный
     const idx = Math.min(state.colorIdx, pal.colors.length - 1);
     state.color = pal.colors[idx];
     updatePaletteUI();
@@ -330,9 +389,9 @@ function updatePaletteUI() {
     el.classList.toggle('active', idx === state.palette);
   });
 }
-// Инициализируем стартовый цвет из активной палитры
 state.color = PALETTES[0].colors[state.colorIdx];
 
+// ---------- Экспорт ----------
 document.getElementById('toolPng').addEventListener('click', exportPNG);
 document.getElementById('toolJson').addEventListener('click', exportJSON);
 document.getElementById('toolSvg').addEventListener('click', exportSVG);
@@ -382,17 +441,36 @@ function exportSVG() {
   link.click();
 }
 
+// ---------- Камера ----------
 const toolCamera = document.getElementById('toolCamera');
+const toolSnap   = document.getElementById('toolSnap');
+const toolResume = document.getElementById('toolResume');
+const countdownEl = document.getElementById('countdown');
+const flashEl     = document.getElementById('flash');
+
 toolCamera.addEventListener('click', toggleCamera);
+toolSnap.addEventListener('click', startSnapCountdown);
+toolResume.addEventListener('click', resumeCamera);
+
+function updateToolbar() {
+  const mode = state.cameraMode;
+  toolCamera.classList.toggle('live', mode !== 'off');
+  toolCamera.textContent = mode === 'off' ? 'camera' : 'stop';
+  toolSnap.classList.toggle('hidden', mode !== 'live');
+  toolResume.classList.toggle('hidden', mode !== 'frozen');
+}
 
 async function toggleCamera() {
-  if (state.cameraOn) { stopCamera(); return; }
+  if (state.cameraMode !== 'off') {
+    stopCamera();
+    return;
+  }
   if (location.protocol === 'file:') {
     alert(
       'Камера требует HTTP(S). Запусти локальный сервер:\n\n' +
       '1) В терминале перейди в папку с файлом\n' +
       '2) Выполни:  python3 -m http.server 8000\n' +
-      '3) Открой:   http://localhost:8000/pixel_camera.html'
+      '3) Открой:   http://localhost:8000/'
     );
     return;
   }
@@ -404,8 +482,8 @@ async function toggleCamera() {
     state.cameraStream = stream;
     state.videoEl.srcObject = stream;
     await state.videoEl.play();
-    state.cameraOn = true;
-    toolCamera.textContent = '● camera';
+    state.cameraMode = 'live';
+    updateToolbar();
     cameraLoop();
   } catch (err) {
     alert('Camera access denied or unavailable: ' + err.message);
@@ -413,12 +491,52 @@ async function toggleCamera() {
 }
 function stopCamera() {
   if (state.cameraStream) state.cameraStream.getTracks().forEach(t => t.stop());
-  state.cameraOn = false;
-  toolCamera.textContent = 'camera';
+  state.cameraStream = null;
+  state.cameraMode = 'off';
+  state.countdownActive = false;
+  countdownEl.classList.remove('active');
+  updateToolbar();
+  // Возвращаем пустой холст для рисования
+  initGrid(state.gridSize);
+  render();
+}
+
+// Обратный отсчёт и стоп-кадр
+function startSnapCountdown() {
+  if (state.cameraMode !== 'live' || state.countdownActive) return;
+  state.countdownActive = true;
+  let remaining = COUNTDOWN_SECONDS;
+  countdownEl.classList.add('active');
+  countdownEl.textContent = remaining;
+
+  const tick = () => {
+    remaining -= 1;
+    if (remaining > 0) {
+      countdownEl.textContent = remaining;
+      setTimeout(tick, 1000);
+    } else {
+      countdownEl.classList.remove('active');
+      state.countdownActive = false;
+      // Вспышка и заморозка кадра
+      flashEl.classList.remove('fire'); void flashEl.offsetWidth; // reflow для рестарта анимации
+      flashEl.classList.add('fire');
+      state.cameraMode = 'frozen';
+      updateToolbar();
+      // Последний кадр уже лежит в state.grid от cameraLoop — просто перестаём его обновлять
+    }
+  };
+  setTimeout(tick, 1000);
+}
+
+function resumeCamera() {
+  if (state.cameraMode !== 'frozen') return;
+  state.cameraMode = 'live';
+  updateToolbar();
+  cameraLoop();
 }
 
 function cameraLoop() {
-  if (!state.cameraOn) return;
+  if (state.cameraMode !== 'live') return;
   const n = state.gridSize;
   const hc = state.hiddenCanvas;
   hc.width = n; hc.height = n;
@@ -472,7 +590,9 @@ function cameraLoop() {
   requestAnimationFrame(cameraLoop);
 }
 
+// ---------- Старт ----------
 initGrid(state.gridSize);
+updateToolbar();
 render();
 </script>
 </body>
