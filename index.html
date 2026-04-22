@@ -4,19 +4,22 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 <title>Pixel Camera</title>
+<link href="https://fonts.googleapis.com/css2?family=Source+Code+Pro:wght@400;700&display=swap" rel="stylesheet">
 <style>
   :root {
     --bg: #000;
     --fg: #fff;
+    --dim: rgba(255,255,255,0.45);
     --dim2: rgba(255,255,255,0.7);
     --accent: #ff4ad1;
     --accent2: #7ed0ff;
+    --glow: #8b2fd6;
   }
   * { box-sizing: border-box; }
   html, body {
     margin: 0; padding: 0;
     background: var(--bg); color: var(--fg);
-    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font-family: 'Source Code Pro', ui-monospace, "SF Mono", Menlo, Consolas, monospace;
     min-height: 100vh; min-height: 100dvh;
     overflow-x: hidden;
   }
@@ -24,20 +27,64 @@
     display: flex; flex-direction: column; align-items: center;
     padding: clamp(12px, 3vw, 24px);
     gap: clamp(14px, 2.5vh, 24px);
+    position: relative;
   }
 
+  /* Подсветка-блюр за холстом — берёт текущий цвет как свечение */
+  .glow {
+    position: fixed;
+    top: 50%; left: 50%;
+    width: 60vw; height: 60vh;
+    max-width: 800px; max-height: 800px;
+    transform: translate(-50%, -50%);
+    background: var(--glow);
+    filter: blur(120px);
+    opacity: 0.35;
+    z-index: -1;
+    pointer-events: none;
+    transition: background 0.4s ease;
+  }
+
+  /* Шорткаты слева сверху — в стиле старого редактора */
+  #shortcuts-info {
+    position: fixed;
+    top: 14px; left: 14px;
+    color: #494949;
+    font-size: 11px;
+    max-width: 220px;
+    pointer-events: none;
+    line-height: 1.5;
+    z-index: 10;
+  }
+  #shortcuts-info h3 {
+    margin: 0 0 8px;
+    font-size: 11px;
+    font-weight: 700;
+    color: #6a6a6a;
+    letter-spacing: 0.05em;
+  }
+  #shortcuts-info ul {
+    list-style: none; padding: 0; margin: 0;
+  }
+  #shortcuts-info li { margin-bottom: 3px; }
+  #shortcuts-info strong { color: #8a8a8a; font-weight: 700; }
+
   .coords {
-    position: fixed; top: 12px; right: 14px;
+    position: fixed; top: 14px; right: 14px;
     font-size: 11px; color: var(--dim2);
     letter-spacing: 0.05em;
     pointer-events: none;
+    z-index: 10;
   }
   .status {
-    position: fixed; top: 12px; left: 14px;
+    position: fixed; bottom: 14px; left: 50%;
+    transform: translateX(-50%);
     font-size: 11px; color: var(--dim2);
     letter-spacing: 0.05em;
     pointer-events: none;
-    max-width: 40vw;
+    z-index: 10;
+    text-align: center;
+    max-width: 80vw;
   }
 
   .title {
@@ -48,7 +95,7 @@
     cursor: pointer;
     text-align: center;
     transition: color 0.15s;
-    margin: 0; padding: 0;
+    margin: 0;
   }
   .title:hover { color: var(--dim2); }
 
@@ -66,7 +113,7 @@
   .canvas-wrap {
     position: relative;
     border: 1px solid rgba(255,255,255,0.25);
-    width: min(90vw, 70vh, 640px);
+    width: min(90vw, 68vh, 640px);
     aspect-ratio: 1 / 1;
     flex-shrink: 0;
   }
@@ -78,14 +125,11 @@
     cursor: crosshair;
     background: #000;
   }
-  /* Оверлей-слой поверх холста для курсора руки, отсчёта, вспышки */
   .overlay {
     position: absolute; inset: 0;
     pointer-events: none;
   }
-  #handCursor {
-    width: 100%; height: 100%;
-  }
+  #handCursor { width: 100%; height: 100%; }
 
   .palettes {
     display: flex; gap: clamp(8px, 1.5vw, 14px);
@@ -120,12 +164,13 @@
   .toolbar .tool {
     cursor: pointer; color: var(--fg);
     padding: 2px 4px;
-    transition: opacity 0.15s;
+    transition: opacity 0.15s, color 0.15s;
     user-select: none;
   }
   .toolbar .tool:hover { opacity: 0.6; }
   .toolbar .tool.hidden { display: none; }
-  .toolbar .tool.live { color: var(--accent); }
+  .toolbar .tool.active { text-decoration: underline; text-underline-offset: 4px; }
+  .toolbar .tool.cam-live { color: var(--accent); }
   .toolbar .tool.hand-live { color: var(--accent2); }
 
   .countdown {
@@ -156,8 +201,25 @@
 </head>
 <body>
 
-<div class="status" id="status"></div>
+<div class="glow" id="glow"></div>
+
+<div id="shortcuts-info">
+  <h3>Shortcuts</h3>
+  <ul>
+    <li><strong>m:</strong> Change mirror mode</li>
+    <li><strong>c:</strong> Toggle camera</li>
+    <li><strong>h:</strong> Toggle hand drawing</li>
+    <li><strong>space:</strong> Snap / resume</li>
+    <li><strong>shift + drag:</strong> Line</li>
+    <li><strong>ctrl + Z:</strong> Undo</li>
+    <li><strong>ctrl + S:</strong> Save as PNG</li>
+    <li><strong>ctrl + J:</strong> Save as JSON</li>
+    <li><strong>[ ]:</strong> Canvas size</li>
+  </ul>
+</div>
+
 <div class="coords" id="coords">x: 0, y: 0</div>
+<div class="status" id="status"></div>
 
 <div class="title" id="mirrorTitle">Normal</div>
 <div class="size" id="sizeLabel">64x64</div>
@@ -172,6 +234,7 @@
 <div class="palettes" id="palettes"></div>
 
 <div class="toolbar">
+  <span class="tool active" id="toolBrush">brush</span>
   <span class="tool" id="toolCamera">camera</span>
   <span class="tool" id="toolHand">hand</span>
   <span class="tool hidden" id="toolSnap">snap</span>
@@ -184,8 +247,7 @@
 <video id="video" autoplay playsinline muted style="display:none;"></video>
 
 <script type="module">
-// MediaPipe Tasks Vision — грузится только при активации hand-режима
-// чтобы не тормозить старт страницы.
+// MediaPipe Hands — грузится только при активации hand-режима
 let HandLandmarker, FilesetResolver;
 
 const PALETTES = [
@@ -201,9 +263,8 @@ const PALETTES = [
 const SIZES = [32, 48, 64, 80, 96, 112, 128];
 const COUNTDOWN_SECONDS = 3;
 
-// cameraMode: 'off' | 'live' | 'frozen'  — режим "камера рисует сама"
-// handMode:   false | true               — режим "рисуем рукой в воздухе"
-// Эти два режима взаимоисключающие: включение одного выключает другой.
+// mode: 'brush' | 'camera' | 'hand' — три взаимоисключающих режима ввода
+// cameraState: 'live' | 'frozen' — подсостояние для 'camera' режима
 const state = {
   gridSize: 64,
   sizeIdx: 2,
@@ -215,7 +276,8 @@ const state = {
   colorIdx: 4,
   grid: null,
   history: [],
-  cameraMode: 'off',
+  mode: 'brush',
+  cameraState: 'live',
   cameraStream: null,
   videoEl: document.getElementById('video'),
   hiddenCanvas: document.createElement('canvas'),
@@ -223,17 +285,14 @@ const state = {
   shiftPressed: false,
   lineStart: null,
   countdownActive: false,
-
-  // Hand tracking
-  handMode: false,
   handLandmarker: null,
   handLoaded: false,
   handLoading: false,
   lastVideoTime: -1,
-  handSmoothX: 0.5, handSmoothY: 0.5, // сглаженная позиция кончика пальца (0..1)
+  handSmoothX: 0.5, handSmoothY: 0.5,
   handVisible: false,
   handPinching: false,
-  lastDrawCell: null, // для интерполяции между кадрами руки
+  lastDrawCell: null,
 };
 
 function initGrid(size) {
@@ -265,9 +324,9 @@ function mirroredCells(x, y) {
 const mainCanvas = document.getElementById('main');
 const ctx = mainCanvas.getContext('2d');
 ctx.imageSmoothingEnabled = false;
-
 const cursorCanvas = document.getElementById('handCursor');
 const cursorCtx = cursorCanvas.getContext('2d');
+const glowEl = document.getElementById('glow');
 
 function render() {
   const n = state.gridSize;
@@ -313,10 +372,9 @@ function mouseToGrid(e) {
   return [x, y];
 }
 
-function canDraw() { return state.cameraMode === 'off' && !state.handMode; }
-
+// Рисовать мышкой можно только в brush-режиме
 mainCanvas.addEventListener('pointerdown', (e) => {
-  if (!canDraw()) return;
+  if (state.mode !== 'brush') return;
   pushHistory();
   state.drawing = true;
   const [x, y] = mouseToGrid(e);
@@ -327,12 +385,12 @@ mainCanvas.addEventListener('pointermove', (e) => {
   const [x, y] = mouseToGrid(e);
   document.getElementById('coords').textContent =
     `x: ${Math.max(0, Math.min(state.gridSize-1, x))}, y: ${Math.max(0, Math.min(state.gridSize-1, y))}`;
-  if (state.drawing && !state.shiftPressed && canDraw()) {
+  if (state.drawing && !state.shiftPressed && state.mode === 'brush') {
     paintCell(x, y); render();
   }
 });
 window.addEventListener('pointerup', (e) => {
-  if (state.drawing && state.shiftPressed && state.lineStart && canDraw()) {
+  if (state.drawing && state.shiftPressed && state.lineStart && state.mode === 'brush') {
     const [x, y] = mouseToGrid(e);
     drawLine(state.lineStart[0], state.lineStart[1], x, y);
     render();
@@ -354,15 +412,19 @@ function drawLine(x0, y0, x1, y1) {
   }
 }
 
+// Хоткеи
 window.addEventListener('keydown', (e) => {
+  const ae = document.activeElement;
+  if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA')) return;
+
   if (e.key === 'Shift') state.shiftPressed = true;
   if (e.key === 'm' || e.key === 'M') cycleMirror();
-  if (e.key === 'c' || e.key === 'C') toggleCamera();
-  if (e.key === 'h' || e.key === 'H') toggleHand();
+  if (e.key === 'c' || e.key === 'C') setMode(state.mode === 'camera' ? 'brush' : 'camera');
+  if (e.key === 'h' || e.key === 'H') setMode(state.mode === 'hand'   ? 'brush' : 'hand');
   if (e.key === ' ') {
     e.preventDefault();
-    if (state.cameraMode === 'live') startSnapCountdown();
-    else if (state.cameraMode === 'frozen') resumeCamera();
+    if (state.mode === 'camera' && state.cameraState === 'live') startSnapCountdown();
+    else if (state.mode === 'camera' && state.cameraState === 'frozen') resumeCamera();
   }
   if ((e.ctrlKey || e.metaKey) && e.key === 'z') { e.preventDefault(); undo(); }
   if ((e.ctrlKey || e.metaKey) && e.key === 's') { e.preventDefault(); exportPNG(); }
@@ -413,6 +475,7 @@ PALETTES.forEach((pal, i) => {
     const idx = Math.min(state.colorIdx, pal.colors.length - 1);
     state.color = pal.colors[idx];
     updatePaletteUI();
+    updateGlow();
   });
   palettesEl.appendChild(el);
 });
@@ -422,6 +485,15 @@ function updatePaletteUI() {
   });
 }
 state.color = PALETTES[0].colors[state.colorIdx];
+
+// Подсветка-блюр за холстом — берёт среднюю "сочную" часть палитры
+function updateGlow() {
+  const pal = PALETTES[state.palette].colors;
+  // Берём предпоследний цвет — обычно он самый яркий/насыщенный
+  const glowColor = pal[pal.length - 2] || pal[Math.floor(pal.length / 2)];
+  glowEl.style.background = glowColor;
+}
+updateGlow();
 
 // Экспорт
 document.getElementById('toolPng').addEventListener('click', exportPNG);
@@ -473,7 +545,8 @@ function exportSVG() {
   link.click();
 }
 
-// Камера (пиксельный авто-режим)
+// ==================== РЕЖИМЫ ВВОДА ====================
+const toolBrush  = document.getElementById('toolBrush');
 const toolCamera = document.getElementById('toolCamera');
 const toolHand   = document.getElementById('toolHand');
 const toolSnap   = document.getElementById('toolSnap');
@@ -482,21 +555,69 @@ const countdownEl = document.getElementById('countdown');
 const flashEl     = document.getElementById('flash');
 const statusEl    = document.getElementById('status');
 
-toolCamera.addEventListener('click', toggleCamera);
-toolHand.addEventListener('click', toggleHand);
-toolSnap.addEventListener('click', startSnapCountdown);
+toolBrush.addEventListener('click',  () => setMode('brush'));
+toolCamera.addEventListener('click', () => setMode(state.mode === 'camera' ? 'brush' : 'camera'));
+toolHand.addEventListener('click',   () => setMode(state.mode === 'hand'   ? 'brush' : 'hand'));
+toolSnap.addEventListener('click',   startSnapCountdown);
 toolResume.addEventListener('click', resumeCamera);
 
 function setStatus(msg) { statusEl.textContent = msg || ''; }
 
 function updateToolbar() {
-  const mode = state.cameraMode;
-  toolCamera.classList.toggle('live', mode !== 'off');
-  toolCamera.textContent = mode === 'off' ? 'camera' : 'stop';
-  toolSnap.classList.toggle('hidden', mode !== 'live');
-  toolResume.classList.toggle('hidden', mode !== 'frozen');
-  toolHand.classList.toggle('hand-live', state.handMode);
-  toolHand.textContent = state.handMode ? 'stop hand' : 'hand';
+  toolBrush.classList.toggle('active',  state.mode === 'brush');
+  toolCamera.classList.toggle('active', state.mode === 'camera');
+  toolCamera.classList.toggle('cam-live', state.mode === 'camera');
+  toolHand.classList.toggle('active',   state.mode === 'hand');
+  toolHand.classList.toggle('hand-live', state.mode === 'hand');
+
+  toolSnap.classList.toggle('hidden',   !(state.mode === 'camera' && state.cameraState === 'live'));
+  toolResume.classList.toggle('hidden', !(state.mode === 'camera' && state.cameraState === 'frozen'));
+}
+
+async function setMode(next) {
+  if (next === state.mode) return;
+
+  // Выход из текущего режима
+  if (state.mode === 'camera') {
+    state.cameraState = 'live';
+    state.countdownActive = false;
+    countdownEl.classList.remove('active');
+  }
+  if (state.mode === 'hand') {
+    cursorCtx.clearRect(0, 0, cursorCanvas.width, cursorCanvas.height);
+    state.handVisible = false;
+    state.handPinching = false;
+  }
+
+  state.mode = next;
+
+  // Вход в новый режим
+  if (next === 'brush') {
+    // Можно отключить камеру, если никто больше её не использует
+    if (state.cameraStream) {
+      state.cameraStream.getTracks().forEach(t => t.stop());
+      state.cameraStream = null;
+    }
+    initGrid(state.gridSize);
+    render();
+    setStatus('');
+  } else if (next === 'camera') {
+    const ok = await ensureCameraStream();
+    if (!ok) { state.mode = 'brush'; updateToolbar(); return; }
+    state.cameraState = 'live';
+    setStatus('press space to snap');
+    cameraLoop();
+  } else if (next === 'hand') {
+    const ok = await ensureCameraStream();
+    if (!ok) { state.mode = 'brush'; updateToolbar(); return; }
+    try { await loadHandLandmarker(); }
+    catch { state.mode = 'brush'; updateToolbar(); return; }
+    state.lastDrawCell = null;
+    setStatus('pinch index + thumb to draw');
+    handLoop();
+  }
+
+  updateToolbar();
 }
 
 async function ensureCameraStream() {
@@ -525,32 +646,9 @@ async function ensureCameraStream() {
   }
 }
 
-async function toggleCamera() {
-  if (state.cameraMode !== 'off') { stopCamera(); return; }
-  // Hand и camera — взаимоисключающие режимы
-  if (state.handMode) stopHand();
-  const ok = await ensureCameraStream();
-  if (!ok) return;
-  state.cameraMode = 'live';
-  updateToolbar();
-  cameraLoop();
-}
-function stopCamera() {
-  state.cameraMode = 'off';
-  state.countdownActive = false;
-  countdownEl.classList.remove('active');
-  // Поток освобождаем только если и hand-режим не нужен
-  if (!state.handMode && state.cameraStream) {
-    state.cameraStream.getTracks().forEach(t => t.stop());
-    state.cameraStream = null;
-  }
-  updateToolbar();
-  initGrid(state.gridSize);
-  render();
-}
-
+// --- Camera mode ---
 function startSnapCountdown() {
-  if (state.cameraMode !== 'live' || state.countdownActive) return;
+  if (state.mode !== 'camera' || state.cameraState !== 'live' || state.countdownActive) return;
   state.countdownActive = true;
   let remaining = COUNTDOWN_SECONDS;
   countdownEl.classList.add('active');
@@ -565,21 +663,23 @@ function startSnapCountdown() {
       state.countdownActive = false;
       flashEl.classList.remove('fire'); void flashEl.offsetWidth;
       flashEl.classList.add('fire');
-      state.cameraMode = 'frozen';
+      state.cameraState = 'frozen';
       updateToolbar();
+      setStatus('frozen — export or resume');
     }
   };
   setTimeout(tick, 1000);
 }
 function resumeCamera() {
-  if (state.cameraMode !== 'frozen') return;
-  state.cameraMode = 'live';
+  if (state.mode !== 'camera' || state.cameraState !== 'frozen') return;
+  state.cameraState = 'live';
   updateToolbar();
+  setStatus('press space to snap');
   cameraLoop();
 }
 
 function cameraLoop() {
-  if (state.cameraMode !== 'live') return;
+  if (state.mode !== 'camera' || state.cameraState !== 'live') return;
   const n = state.gridSize;
   const hc = state.hiddenCanvas;
   hc.width = n; hc.height = n;
@@ -598,7 +698,6 @@ function cameraLoop() {
   const img = hctx.getImageData(0, 0, n, n).data;
   const pal = PALETTES[state.palette].colors;
   const palRgb = pal.map(hexToRgb);
-
   const newGrid = Array.from({ length: n }, () => Array(n).fill(null));
   for (let y = 0; y < n; y++) {
     for (let x = 0; x < n; x++) {
@@ -614,7 +713,6 @@ function cameraLoop() {
       newGrid[y][x] = pal[best];
     }
   }
-
   if (state.mirror !== 0) {
     for (let y = 0; y < n; y++) {
       for (let x = 0; x < n; x++) {
@@ -632,10 +730,7 @@ function cameraLoop() {
   requestAnimationFrame(cameraLoop);
 }
 
-// ==================== HAND TRACKING ====================
-// Рисуем рукой в воздухе. Указательный палец — курсор.
-// "Щипок" (большой + указательный сведены) — рисование активно.
-
+// --- Hand mode ---
 async function loadHandLandmarker() {
   if (state.handLoaded || state.handLoading) return;
   state.handLoading = true;
@@ -644,10 +739,10 @@ async function loadHandLandmarker() {
     const mod = await import('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs');
     HandLandmarker = mod.HandLandmarker;
     FilesetResolver = mod.FilesetResolver;
-    const filesetResolver = await FilesetResolver.forVisionTasks(
+    const fileset = await FilesetResolver.forVisionTasks(
       'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm'
     );
-    state.handLandmarker = await HandLandmarker.createFromOptions(filesetResolver, {
+    state.handLandmarker = await HandLandmarker.createFromOptions(fileset, {
       baseOptions: {
         modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task',
         delegate: 'GPU',
@@ -657,7 +752,6 @@ async function loadHandLandmarker() {
     });
     state.handLoaded = true;
     state.handLoading = false;
-    setStatus('');
   } catch (err) {
     state.handLoading = false;
     setStatus('');
@@ -666,36 +760,8 @@ async function loadHandLandmarker() {
   }
 }
 
-async function toggleHand() {
-  if (state.handMode) { stopHand(); return; }
-  if (state.cameraMode !== 'off') stopCamera();
-  const ok = await ensureCameraStream();
-  if (!ok) return;
-  try {
-    await loadHandLandmarker();
-  } catch { return; }
-  state.handMode = true;
-  state.lastDrawCell = null;
-  updateToolbar();
-  setStatus('pinch index + thumb to draw');
-  handLoop();
-}
-function stopHand() {
-  state.handMode = false;
-  state.handPinching = false;
-  state.handVisible = false;
-  cursorCtx.clearRect(0, 0, cursorCanvas.width, cursorCanvas.height);
-  if (!state.cameraStream) {/* ничего */}
-  else if (state.cameraMode === 'off') {
-    state.cameraStream.getTracks().forEach(t => t.stop());
-    state.cameraStream = null;
-  }
-  updateToolbar();
-  setStatus('');
-}
-
 function handLoop() {
-  if (!state.handMode) return;
+  if (state.mode !== 'hand') return;
   const v = state.videoEl;
   if (v.readyState >= 2 && v.currentTime !== state.lastVideoTime) {
     state.lastVideoTime = v.currentTime;
@@ -715,33 +781,20 @@ function processHandResult(res) {
   }
   state.handVisible = true;
   const lm = res.landmarks[0];
-  // Индексы MediaPipe: 4 = big toe of thumb, 8 = index tip
-  const indexTip = lm[8];
-  const thumbTip = lm[4];
-
-  // Видео у нас зеркалится визуально (мы рисуем его перевёрнутым по X).
-  // Координаты MediaPipe даются в 0..1 от оригинального кадра,
-  // поэтому для курсора на холсте нужно отзеркалить X.
+  const indexTip = lm[8], thumbTip = lm[4];
   const tx = 1 - indexTip.x;
   const ty = indexTip.y;
-
-  // Сглаживание (lerp) — иначе курсор дрожит
   const a = 0.35;
   state.handSmoothX += (tx - state.handSmoothX) * a;
   state.handSmoothY += (ty - state.handSmoothY) * a;
 
-  // Щипок: расстояние между кончиком большого и указательного пальца
-  // нормализованное на ширину ладони (чтобы не зависеть от расстояния до камеры).
   const dx = indexTip.x - thumbTip.x;
   const dy = indexTip.y - thumbTip.y;
   const pinchDist = Math.hypot(dx, dy);
-
   const wrist = lm[0], middleMcp = lm[9];
   const handSize = Math.hypot(wrist.x - middleMcp.x, wrist.y - middleMcp.y) || 0.1;
   const pinchRatio = pinchDist / handSize;
 
-  // Hysteresis: включаем щипок при < 0.35, выключаем при > 0.55 —
-  // иначе на границе будет мигание.
   if (!state.handPinching && pinchRatio < 0.35) {
     state.handPinching = true;
     pushHistory();
@@ -751,14 +804,11 @@ function processHandResult(res) {
     state.lastDrawCell = null;
   }
 
-  // Рисуем, если щипок активен
   if (state.handPinching) {
     const n = state.gridSize;
     const gx = Math.floor(state.handSmoothX * n);
     const gy = Math.floor(state.handSmoothY * n);
     if (state.lastDrawCell) {
-      // Линия между предыдущей и текущей позицией — чтобы при быстром
-      // движении не было разрывов между кадрами
       drawLine(state.lastDrawCell[0], state.lastDrawCell[1], gx, gy);
     } else {
       paintCell(gx, gy);
@@ -776,15 +826,11 @@ function drawHandCursor() {
   const cx = state.handSmoothX * w;
   const cy = state.handSmoothY * h;
   const r = state.handPinching ? 14 : 20;
-
-  // Внешний круг
   ctx2.strokeStyle = state.handPinching ? '#ff4ad1' : '#7ed0ff';
   ctx2.lineWidth = 3;
   ctx2.beginPath();
   ctx2.arc(cx, cy, r, 0, Math.PI * 2);
   ctx2.stroke();
-
-  // Точка в центре
   ctx2.fillStyle = state.handPinching ? '#ff4ad1' : '#7ed0ff';
   ctx2.beginPath();
   ctx2.arc(cx, cy, 3, 0, Math.PI * 2);

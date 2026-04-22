@@ -4,18 +4,18 @@ Draw by hand, with your webcam, or with your actual hand in the air.
 
 **[Live →](https://artbant.github.io/pixelcamera/)**
 
-## What it does
+## Three ways to paint
 
-- **Draw** — click and drag, pixel by pixel
-- **Camera** — your webcam paints itself through the active palette
-- **Hand** — pinch your fingers in the air to draw, no mouse needed
-- **Snap** — 3-second countdown, freeze the frame, export it
+- **brush** — click and drag, pixel by pixel
+- **camera** — your webcam paints itself through the active palette
+- **hand** — pinch your fingers in the air to draw, no mouse needed
 
 ## Modes & controls
 
 - Click the title — cycle mirror mode (Normal, Vertical, Horizontal, Radial)
 - Click the size — cycle canvas (32 → 128)
 - Click a palette — switch the color set
+- **space** — snap a 3-second countdown in camera mode, freeze the frame
 - Export as PNG, JSON, or SVG
 
 ## Under the hood
