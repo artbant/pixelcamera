@@ -136,9 +136,8 @@
     flex-wrap: wrap;
     max-width: 100%;
     min-height: 28px;
-    transition: opacity 0.2s;
   }
-  .palettes.dimmed { opacity: 0.25; pointer-events: none; }
+  .palettes.hidden { display: none; }
   .palette {
     width: clamp(22px, 5vw, 28px);
     height: clamp(22px, 5vw, 28px);
@@ -263,11 +262,11 @@
   <span class="tool" id="toolEraser">eraser</span>
   <span class="current-color" id="currentColor"></span>
 
+  <span class="tool" id="toolHand">hand</span>
+
   <span class="tool" id="toolCamera">camera</span>
   <span class="tool hidden" id="toolSnap">snap</span>
   <span class="tool hidden" id="toolResume">resume</span>
-
-  <span class="tool" id="toolHand">hand</span>
 
   <span class="tool" id="toolPng">png</span>
   <span class="tool" id="toolJson">json</span>
@@ -636,18 +635,26 @@ function updateToolbar() {
   toolSnap.classList.toggle('hidden',   !(m === 'camera' && state.cameraState === 'live'));
   toolResume.classList.toggle('hidden', !(m === 'camera' && state.cameraState === 'frozen'));
 
-  // Палитры-наборы активны только в camera, в остальных режимах приглушены
-  palettesEl.classList.toggle('dimmed', m !== 'camera');
+  // Палитры-наборы видны только в camera-режиме
+  palettesEl.classList.toggle('hidden', m !== 'camera');
 }
 
 async function setMode(next) {
   if (next === state.mode) return;
 
-  // Выход из текущего
+  // Выход из текущего режима
   if (state.mode === 'camera') {
+    // Если не был сделан снап (режим был live) — очищаем холст,
+    // чтобы в hand/brush не оставалась случайная последняя картинка с видео.
+    // Если был снап (frozen) — оставляем кадр как основу для дорисовки.
+    const wasFrozen = state.cameraState === 'frozen';
     state.cameraState = 'live';
     state.countdownActive = false;
     countdownEl.classList.remove('active');
+    if (!wasFrozen) {
+      initGrid(state.gridSize);
+      state.history = [];
+    }
   }
   if (state.mode === 'hand') {
     cursorCtx.clearRect(0, 0, cursorCanvas.width, cursorCanvas.height);
@@ -662,9 +669,9 @@ async function setMode(next) {
       state.cameraStream.getTracks().forEach(t => t.stop());
       state.cameraStream = null;
     }
-    // Не очищаем холст — пусть то что нарисовано (или снято) остаётся как база для рисования
     setStatus('');
     updateGlow();
+    render();
   } else if (next === 'camera') {
     state.eraser = false; // ластик в camera не используется
     const ok = await ensureCameraStream();
@@ -681,6 +688,7 @@ async function setMode(next) {
     state.lastDrawCell = null;
     setStatus('pinch index + thumb to draw');
     updateGlow();
+    render();
     handLoop();
   }
 
