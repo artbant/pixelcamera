@@ -1,0 +1,479 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Pixel Camera</title>
+<style>
+  :root {
+    --bg: #000;
+    --fg: #fff;
+    --dim2: rgba(255,255,255,0.7);
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--bg); color: var(--fg);
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    min-height: 100vh; overflow-x: hidden;
+  }
+  body {
+    display: flex; flex-direction: column; align-items: center;
+    padding: 24px 24px 80px;
+  }
+
+  .coords {
+    position: fixed; top: 24px; right: 24px;
+    font-size: 12px; color: var(--dim2);
+    letter-spacing: 0.05em;
+  }
+
+  .title {
+    margin-top: 40px;
+    font-size: 28px; font-weight: 700;
+    letter-spacing: 0.01em;
+    user-select: none;
+    cursor: pointer;
+    text-align: center;
+    transition: color 0.15s;
+  }
+  .title:hover { color: var(--dim2); }
+
+  .size {
+    margin-top: 8px; margin-bottom: 28px;
+    font-size: 14px; color: var(--dim2);
+    letter-spacing: 0.08em;
+    cursor: pointer;
+    user-select: none;
+    transition: color 0.15s;
+  }
+  .size:hover { color: var(--fg); }
+
+  .canvas-wrap {
+    position: relative;
+    border: 1px solid rgba(255,255,255,0.25);
+  }
+  canvas#main {
+    display: block;
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+    cursor: crosshair;
+    background: #000;
+  }
+
+  /* Палитры: один квадрат на палитру, все в один ряд */
+  .palettes {
+    margin-top: 32px;
+    display: flex; gap: 14px;
+    justify-content: center;
+    flex-wrap: wrap;
+  }
+  .palette {
+    width: 28px; height: 28px;
+    border: 1px solid rgba(255,255,255,0.2);
+    cursor: pointer;
+    transition: border-color 0.15s, transform 0.1s;
+    position: relative;
+  }
+  .palette:hover { border-color: rgba(255,255,255,0.6); }
+  .palette.active {
+    border-color: var(--fg);
+    transform: scale(1.08);
+  }
+
+  .toolbar {
+    margin-top: 28px;
+    display: flex; gap: 22px; align-items: center;
+    font-size: 22px; font-weight: 700;
+    letter-spacing: 0.02em;
+  }
+  .toolbar .tool {
+    cursor: pointer; color: var(--fg);
+    padding: 2px 4px;
+    transition: opacity 0.15s;
+  }
+  .toolbar .tool:hover { opacity: 0.6; }
+</style>
+</head>
+<body>
+
+<div class="coords" id="coords">x: 0, y: 0</div>
+
+<div class="title" id="mirrorTitle">Normal</div>
+<div class="size" id="sizeLabel">64x64</div>
+
+<div class="canvas-wrap">
+  <canvas id="main" width="640" height="640"></canvas>
+</div>
+
+<div class="palettes" id="palettes"></div>
+
+<div class="toolbar">
+  <span class="tool" id="toolBrush">brush</span>
+  <span class="tool" id="toolCamera">camera</span>
+  <span class="tool" id="toolPng">png</span>
+  <span class="tool" id="toolJson">json</span>
+  <span class="tool" id="toolSvg">svg</span>
+</div>
+
+<video id="video" autoplay playsinline muted style="display:none;"></video>
+
+<script>
+const PALETTES = [
+  { name: 'neon',    colors: ['#000000','#1a0033','#4a1a8a','#8b2fd6','#e4a8ff','#ff4ad1','#7ed0ff','#ffffff'] },
+  { name: 'sunset',  colors: ['#000000','#1a0b0b','#6b1a3a','#c2185b','#ff6b35','#ffa45c','#ffd166','#ffffff'] },
+  { name: 'gameboy', colors: ['#0f380f','#306230','#8bac0f','#9bbc0f','#cadc9f','#e0f8d0','#ffffff','#000000'] },
+  { name: 'c64',     colors: ['#000000','#352879','#6c5eb5','#b8c76f','#ff77a8','#ff6b6b','#aaffe6','#ffffff'] },
+  { name: 'mono',    colors: ['#000000','#1a1a1a','#3a3a3a','#6a6a6a','#9a9a9a','#c8c8c8','#e8e8e8','#ffffff'] },
+  { name: 'vapor',   colors: ['#1a0033','#3a0ca3','#7209b7','#f72585','#4cc9f0','#b8f3ff','#fff1e6','#ffffff'] },
+  { name: 'earth',   colors: ['#1d1107','#3e2a14','#7a4a21','#c07a3e','#e8b478','#88a34a','#4a6b2e','#f5ead0'] },
+];
+
+const SIZES = [32, 48, 64, 80, 96, 112, 128];
+
+const state = {
+  gridSize: 64,
+  sizeIdx: 2,
+  canvasPixels: 640,
+  mirror: 0,
+  mirrorNames: ['Normal', 'Vertical Mirror', 'Horizontal Mirror', 'Radial Mirror'],
+  color: '#e4a8ff',
+  palette: 0,
+  grid: null,
+  history: [],
+  cameraOn: false,
+  cameraStream: null,
+  videoEl: document.getElementById('video'),
+  hiddenCanvas: document.createElement('canvas'),
+  drawing: false,
+  shiftPressed: false,
+  lineStart: null,
+  // Индекс цвета в текущей палитре — используется при смене палитры,
+  // чтобы кисть автоматически брала "тот же по смыслу" оттенок.
+  colorIdx: 4,
+};
+
+function initGrid(size) {
+  state.grid = Array.from({ length: size }, () => Array(size).fill(null));
+}
+function hexToRgb(h) {
+  const n = parseInt(h.slice(1), 16);
+  return [(n>>16)&255, (n>>8)&255, n&255];
+}
+function colorDist(a, b) {
+  const dr = a[0]-b[0], dg = a[1]-b[1], db = a[2]-b[2];
+  return dr*dr + dg*dg + db*db;
+}
+
+function mirroredCells(x, y) {
+  const n = state.gridSize;
+  const cells = [[x, y]];
+  const mode = state.mirror;
+  if (mode === 1) cells.push([n - 1 - x, y]);
+  else if (mode === 2) cells.push([x, n - 1 - y]);
+  else if (mode === 3) {
+    const nx = n - 1 - x, ny = n - 1 - y;
+    cells.push([nx, y], [x, ny], [nx, ny]);
+    cells.push([y, x], [ny, x], [y, nx], [ny, nx]);
+  }
+  return cells;
+}
+
+const mainCanvas = document.getElementById('main');
+const ctx = mainCanvas.getContext('2d');
+ctx.imageSmoothingEnabled = false;
+
+function render() {
+  const n = state.gridSize;
+  const cell = state.canvasPixels / n;
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0, 0, state.canvasPixels, state.canvasPixels);
+  for (let y = 0; y < n; y++) {
+    for (let x = 0; x < n; x++) {
+      const c = state.grid[y][x];
+      if (c) {
+        ctx.fillStyle = c;
+        ctx.fillRect(x * cell, y * cell, Math.ceil(cell), Math.ceil(cell));
+      }
+    }
+  }
+}
+
+function paintCell(x, y) {
+  const n = state.gridSize;
+  if (x < 0 || y < 0 || x >= n || y >= n) return;
+  const cells = mirroredCells(x, y);
+  for (const [cx, cy] of cells) {
+    if (cx >= 0 && cy >= 0 && cx < n && cy < n) {
+      state.grid[cy][cx] = state.color;
+    }
+  }
+}
+
+function pushHistory() {
+  state.history.push(state.grid.map(row => row.slice()));
+  if (state.history.length > 50) state.history.shift();
+}
+function undo() {
+  if (!state.history.length) return;
+  state.grid = state.history.pop();
+  render();
+}
+
+function mouseToGrid(e) {
+  const rect = mainCanvas.getBoundingClientRect();
+  const x = Math.floor((e.clientX - rect.left) / rect.width * state.gridSize);
+  const y = Math.floor((e.clientY - rect.top) / rect.height * state.gridSize);
+  return [x, y];
+}
+
+mainCanvas.addEventListener('pointerdown', (e) => {
+  if (state.cameraOn) return;
+  pushHistory();
+  state.drawing = true;
+  const [x, y] = mouseToGrid(e);
+  if (state.shiftPressed) state.lineStart = [x, y];
+  else { paintCell(x, y); render(); }
+});
+mainCanvas.addEventListener('pointermove', (e) => {
+  const [x, y] = mouseToGrid(e);
+  document.getElementById('coords').textContent =
+    `x: ${Math.max(0, Math.min(state.gridSize-1, x))}, y: ${Math.max(0, Math.min(state.gridSize-1, y))}`;
+  if (state.drawing && !state.shiftPressed && !state.cameraOn) {
+    paintCell(x, y); render();
+  }
+});
+window.addEventListener('pointerup', (e) => {
+  if (state.drawing && state.shiftPressed && state.lineStart) {
+    const [x, y] = mouseToGrid(e);
+    drawLine(state.lineStart[0], state.lineStart[1], x, y);
+    render();
+    state.lineStart = null;
+  }
+  state.drawing = false;
+});
+
+function drawLine(x0, y0, x1, y1) {
+  const dx = Math.abs(x1-x0), dy = Math.abs(y1-y0);
+  const sx = x0<x1?1:-1, sy = y0<y1?1:-1;
+  let err = dx-dy, x = x0, y = y0;
+  while (true) {
+    paintCell(x, y);
+    if (x === x1 && y === y1) break;
+    const e2 = 2*err;
+    if (e2 > -dy) { err -= dy; x += sx; }
+    if (e2 < dx)  { err += dx; y += sy; }
+  }
+}
+
+window.addEventListener('keydown', (e) => {
+  if (e.key === 'Shift') state.shiftPressed = true;
+  if (e.key === 'm' || e.key === 'M') cycleMirror();
+  if (e.key === 'c' || e.key === 'C') toggleCamera();
+  if ((e.ctrlKey || e.metaKey) && e.key === 'z') { e.preventDefault(); undo(); }
+  if ((e.ctrlKey || e.metaKey) && e.key === 's') { e.preventDefault(); exportPNG(); }
+  if ((e.ctrlKey || e.metaKey) && e.key === 'j') { e.preventDefault(); exportJSON(); }
+  if (e.key === '[') cycleSize(-1);
+  if (e.key === ']') cycleSize(+1);
+});
+window.addEventListener('keyup', (e) => {
+  if (e.key === 'Shift') state.shiftPressed = false;
+});
+
+function cycleMirror() {
+  state.mirror = (state.mirror + 1) % 4;
+  document.getElementById('mirrorTitle').textContent = state.mirrorNames[state.mirror];
+}
+document.getElementById('mirrorTitle').addEventListener('click', cycleMirror);
+
+function cycleSize(dir = 1) {
+  state.sizeIdx = (state.sizeIdx + dir + SIZES.length) % SIZES.length;
+  const v = SIZES[state.sizeIdx];
+  state.gridSize = v;
+  document.getElementById('sizeLabel').textContent = `${v}x${v}`;
+  initGrid(v);
+  state.history = [];
+  render();
+}
+document.getElementById('sizeLabel').addEventListener('click', () => cycleSize(1));
+
+// ---------- Палитры: один квадрат на палитру ----------
+// Рисуем каждую палитру как маленький "слоёный" квадрат с градиентом
+// из 8 цветов, чтобы визуально считывалась её тема.
+function paletteGradientCss(colors) {
+  // Делим квадрат на вертикальные полоски по числу цветов
+  const n = colors.length;
+  const stops = [];
+  colors.forEach((c, i) => {
+    stops.push(`${c} ${(i / n) * 100}%`);
+    stops.push(`${c} ${((i + 1) / n) * 100}%`);
+  });
+  return `linear-gradient(to bottom, ${stops.join(', ')})`;
+}
+
+const palettesEl = document.getElementById('palettes');
+PALETTES.forEach((pal, i) => {
+  const el = document.createElement('div');
+  el.className = 'palette' + (i === 0 ? ' active' : '');
+  el.title = pal.name;
+  el.style.background = paletteGradientCss(pal.colors);
+  el.addEventListener('click', () => {
+    state.palette = i;
+    // Берём цвет по тому же индексу, что был, или ближайший валидный
+    const idx = Math.min(state.colorIdx, pal.colors.length - 1);
+    state.color = pal.colors[idx];
+    updatePaletteUI();
+  });
+  palettesEl.appendChild(el);
+});
+function updatePaletteUI() {
+  document.querySelectorAll('.palette').forEach((el, idx) => {
+    el.classList.toggle('active', idx === state.palette);
+  });
+}
+// Инициализируем стартовый цвет из активной палитры
+state.color = PALETTES[0].colors[state.colorIdx];
+
+document.getElementById('toolPng').addEventListener('click', exportPNG);
+document.getElementById('toolJson').addEventListener('click', exportJSON);
+document.getElementById('toolSvg').addEventListener('click', exportSVG);
+
+function exportPNG() {
+  const n = state.gridSize;
+  const c = document.createElement('canvas');
+  c.width = n; c.height = n;
+  const cx = c.getContext('2d');
+  for (let y = 0; y < n; y++) {
+    for (let x = 0; x < n; x++) {
+      if (state.grid[y][x]) {
+        cx.fillStyle = state.grid[y][x];
+        cx.fillRect(x, y, 1, 1);
+      }
+    }
+  }
+  const link = document.createElement('a');
+  link.download = `pixel_${n}x${n}.png`;
+  link.href = c.toDataURL('image/png');
+  link.click();
+}
+function exportJSON() {
+  const data = { size: state.gridSize, grid: state.grid };
+  const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
+  const link = document.createElement('a');
+  link.download = `pixel_${state.gridSize}.json`;
+  link.href = URL.createObjectURL(blob);
+  link.click();
+}
+function exportSVG() {
+  const n = state.gridSize;
+  let s = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${n} ${n}" shape-rendering="crispEdges">`;
+  s += `<rect width="${n}" height="${n}" fill="#000"/>`;
+  for (let y = 0; y < n; y++) {
+    for (let x = 0; x < n; x++) {
+      if (state.grid[y][x]) {
+        s += `<rect x="${x}" y="${y}" width="1" height="1" fill="${state.grid[y][x]}"/>`;
+      }
+    }
+  }
+  s += `</svg>`;
+  const blob = new Blob([s], { type: 'image/svg+xml' });
+  const link = document.createElement('a');
+  link.download = `pixel_${n}.svg`;
+  link.href = URL.createObjectURL(blob);
+  link.click();
+}
+
+const toolCamera = document.getElementById('toolCamera');
+toolCamera.addEventListener('click', toggleCamera);
+
+async function toggleCamera() {
+  if (state.cameraOn) { stopCamera(); return; }
+  if (location.protocol === 'file:') {
+    alert(
+      'Камера требует HTTP(S). Запусти локальный сервер:\n\n' +
+      '1) В терминале перейди в папку с файлом\n' +
+      '2) Выполни:  python3 -m http.server 8000\n' +
+      '3) Открой:   http://localhost:8000/pixel_camera.html'
+    );
+    return;
+  }
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { width: 640, height: 640, facingMode: 'user' },
+      audio: false,
+    });
+    state.cameraStream = stream;
+    state.videoEl.srcObject = stream;
+    await state.videoEl.play();
+    state.cameraOn = true;
+    toolCamera.textContent = '● camera';
+    cameraLoop();
+  } catch (err) {
+    alert('Camera access denied or unavailable: ' + err.message);
+  }
+}
+function stopCamera() {
+  if (state.cameraStream) state.cameraStream.getTracks().forEach(t => t.stop());
+  state.cameraOn = false;
+  toolCamera.textContent = 'camera';
+}
+
+function cameraLoop() {
+  if (!state.cameraOn) return;
+  const n = state.gridSize;
+  const hc = state.hiddenCanvas;
+  hc.width = n; hc.height = n;
+  const hctx = hc.getContext('2d');
+  hctx.imageSmoothingEnabled = false;
+
+  hctx.save();
+  hctx.translate(n, 0); hctx.scale(-1, 1);
+  const v = state.videoEl;
+  const side = Math.min(v.videoWidth, v.videoHeight);
+  const sx = (v.videoWidth - side) / 2;
+  const sy = (v.videoHeight - side) / 2;
+  hctx.drawImage(v, sx, sy, side, side, 0, 0, n, n);
+  hctx.restore();
+
+  const img = hctx.getImageData(0, 0, n, n).data;
+  const pal = PALETTES[state.palette].colors;
+  const palRgb = pal.map(hexToRgb);
+
+  const newGrid = Array.from({ length: n }, () => Array(n).fill(null));
+  for (let y = 0; y < n; y++) {
+    for (let x = 0; x < n; x++) {
+      const i = (y * n + x) * 4;
+      const r = img[i], g = img[i+1], b = img[i+2];
+      const lum = (r*299 + g*587 + b*114) / 1000;
+      if (lum < 18) { newGrid[y][x] = null; continue; }
+      let best = 0, bestD = Infinity;
+      for (let k = 0; k < palRgb.length; k++) {
+        const d = colorDist([r,g,b], palRgb[k]);
+        if (d < bestD) { bestD = d; best = k; }
+      }
+      newGrid[y][x] = pal[best];
+    }
+  }
+
+  if (state.mirror !== 0) {
+    for (let y = 0; y < n; y++) {
+      for (let x = 0; x < n; x++) {
+        const c = newGrid[y][x];
+        if (!c) continue;
+        const cells = mirroredCells(x, y);
+        for (const [cx, cy] of cells) {
+          if (cx>=0 && cy>=0 && cx<n && cy<n) newGrid[cy][cx] = c;
+        }
+      }
+    }
+  }
+
+  state.grid = newGrid;
+  render();
+  requestAnimationFrame(cameraLoop);
+}
+
+initGrid(state.gridSize);
+render();
+</script>
+</body>
+</html>
