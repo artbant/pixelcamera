@@ -22,6 +22,7 @@
     font-family: 'Source Code Pro', ui-monospace, "SF Mono", Menlo, Consolas, monospace;
     min-height: 100vh; min-height: 100dvh;
     overflow-x: hidden;
+    overscroll-behavior: none; /* убираем bounce при свайпе на мобилке */
   }
   body {
     display: flex; flex-direction: column; align-items: center;
@@ -125,6 +126,7 @@
     image-rendering: crisp-edges;
     cursor: crosshair;
     background: #000;
+    touch-action: none; /* отключаем скролл/зум при рисовании на мобилке */
   }
   .overlay { position: absolute; inset: 0; pointer-events: none; }
   #handCursor { width: 100%; height: 100%; }
@@ -173,7 +175,6 @@
   .toolbar .tool.active { text-decoration: underline; text-underline-offset: 4px; }
   .toolbar .tool.cam-live { color: var(--accent); }
   .toolbar .tool.hand-live { color: var(--accent2); }
-  .toolbar .tool.eraser-on { text-decoration: underline; text-underline-offset: 4px; }
 
   /* Текущий цвет — квадратик для нативного color picker */
   .current-color {
@@ -325,6 +326,7 @@ const state = {
   drawing: false,
   shiftPressed: false,
   lineStart: null,
+  gridBeforeLine: null,
   countdownActive: false,
   handLandmarker: null,
   handLoaded: false,
@@ -420,23 +422,39 @@ mainCanvas.addEventListener('pointerdown', (e) => {
   pushHistory();
   state.drawing = true;
   const [x, y] = mouseToGrid(e);
-  if (state.shiftPressed) state.lineStart = [x, y];
-  else { paintCell(x, y); render(); }
+  if (state.shiftPressed) {
+    // Запоминаем стартовую точку линии, временно сохраняем исходную сетку,
+    // чтобы превью линии можно было перерисовывать поверх без накопления.
+    state.lineStart = [x, y];
+    state.gridBeforeLine = state.grid.map(row => row.slice());
+  } else {
+    paintCell(x, y); render();
+  }
 });
 mainCanvas.addEventListener('pointermove', (e) => {
   const [x, y] = mouseToGrid(e);
   document.getElementById('coords').textContent =
     `x: ${Math.max(0, Math.min(state.gridSize-1, x))}, y: ${Math.max(0, Math.min(state.gridSize-1, y))}`;
-  if (state.drawing && !state.shiftPressed && state.mode === 'brush') {
-    paintCell(x, y); render();
+  if (state.drawing && state.mode === 'brush') {
+    if (state.shiftPressed && state.lineStart) {
+      // Live-превью линии: восстанавливаем сетку и рисуем линию заново
+      state.grid = state.gridBeforeLine.map(row => row.slice());
+      drawLine(state.lineStart[0], state.lineStart[1], x, y);
+      render();
+    } else if (!state.shiftPressed) {
+      paintCell(x, y); render();
+    }
   }
 });
 window.addEventListener('pointerup', (e) => {
   if (state.drawing && state.shiftPressed && state.lineStart && state.mode === 'brush') {
     const [x, y] = mouseToGrid(e);
+    // Финальная отрисовка линии от стартовой точки до отпускания
+    state.grid = state.gridBeforeLine.map(row => row.slice());
     drawLine(state.lineStart[0], state.lineStart[1], x, y);
     render();
     state.lineStart = null;
+    state.gridBeforeLine = null;
   }
   state.drawing = false;
 });
@@ -571,14 +589,26 @@ document.getElementById('toolSvg').addEventListener('click', exportSVG);
 
 function exportPNG() {
   const n = state.gridSize;
+  // Увеличиваем до ~1024px с целочисленным масштабом,
+  // чтобы пиксели оставались идеально квадратными.
+  const targetSize = 1024;
+  const scale = Math.max(1, Math.floor(targetSize / n));
+  const out = n * scale;
+
   const c = document.createElement('canvas');
-  c.width = n; c.height = n;
+  c.width = out; c.height = out;
   const cx = c.getContext('2d');
+  cx.imageSmoothingEnabled = false; // критично для пиксель-арта
+
+  // Чёрный фон для пустых клеток
+  cx.fillStyle = '#000';
+  cx.fillRect(0, 0, out, out);
+
   for (let y = 0; y < n; y++) {
     for (let x = 0; x < n; x++) {
       if (state.grid[y][x]) {
         cx.fillStyle = state.grid[y][x];
-        cx.fillRect(x, y, 1, 1);
+        cx.fillRect(x * scale, y * scale, scale, scale);
       }
     }
   }
@@ -625,9 +655,32 @@ const countdownEl = document.getElementById('countdown');
 const flashEl     = document.getElementById('flash');
 const statusEl    = document.getElementById('status');
 
-toolBrush.addEventListener('click',  () => setMode('brush'));
+toolBrush.addEventListener('click',  () => {
+  // Клик по brush: если уже в brush-режиме, выключаем ластик.
+  // Если в другом режиме, переключаемся в brush (ластик сохраняется).
+  if (state.mode === 'brush' && state.eraser) {
+    state.eraser = false;
+    updateToolbar();
+  } else {
+    setMode('brush');
+  }
+});
 toolCamera.addEventListener('click', () => setMode(state.mode === 'camera' ? 'brush' : 'camera'));
-toolHand.addEventListener('click',   () => setMode(state.mode === 'hand'   ? 'brush' : 'hand'));
+toolHand.addEventListener('click',   () => {
+  // Клик по hand: если уже в hand с ластиком — выключаем ластик.
+  // Если в hand без ластика — выходим в brush.
+  // Иначе — входим в hand.
+  if (state.mode === 'hand') {
+    if (state.eraser) {
+      state.eraser = false;
+      updateToolbar();
+    } else {
+      setMode('brush');
+    }
+  } else {
+    setMode('hand');
+  }
+});
 toolEraser.addEventListener('click', toggleEraser);
 toolSnap.addEventListener('click',   startSnapCountdown);
 toolResume.addEventListener('click', resumeCamera);
@@ -642,19 +695,19 @@ function setStatus(msg) { statusEl.textContent = msg || ''; }
 
 function updateToolbar() {
   const m = state.mode;
+  const isDrawMode = (m === 'brush' || m === 'hand');
 
-  // Подсветка активного режима
-  toolBrush.classList.toggle('active', m === 'brush');
+  // В режимах рисования: подсвечен либо кисть, либо ластик — не оба одновременно
+  toolBrush.classList.toggle('active', m === 'brush' && !state.eraser);
   toolCamera.classList.toggle('active', m === 'camera');
   toolCamera.classList.toggle('cam-live', m === 'camera');
-  toolHand.classList.toggle('active', m === 'hand');
+  toolHand.classList.toggle('active', m === 'hand' && !state.eraser);
   toolHand.classList.toggle('hand-live', m === 'hand');
 
   // Ластик и color picker: показываются в brush и hand, скрыты в camera
-  const isDrawMode = (m === 'brush' || m === 'hand');
   toolEraser.classList.toggle('hidden', !isDrawMode);
   currentColorEl.classList.toggle('hidden', !isDrawMode);
-  toolEraser.classList.toggle('eraser-on', state.eraser && isDrawMode);
+  toolEraser.classList.toggle('active', state.eraser && isDrawMode);
 
   // Snap/resume появляются рядом с camera только в camera-режиме
   toolSnap.classList.toggle('hidden',   !(m === 'camera' && state.cameraState === 'live'));
